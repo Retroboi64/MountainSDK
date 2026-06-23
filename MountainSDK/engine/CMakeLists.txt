@@ -19,6 +19,6 @@ target_include_directories(MountainSDK
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-# target_link_libraries(MountainSDK PUBLIC
-#     SDL3::SDL3
-# )
+target_link_libraries(MountainSDK PUBLIC
+     SDL3::SDL3
+)
