@@ -329,7 +329,7 @@ static BOOL IsWindowsBuildVersionAtLeast(DWORD dwBuildNumber)
             result = (test); \
             checked = true; \
         } \
-        return result;
+        return result
 #endif
 
 BOOL WIN_IsWine(void)
@@ -377,6 +377,11 @@ BOOL WIN_IsWindows8OrGreater(void)
 BOOL WIN_IsWindows81OrGreater(void)
 {
     CHECKWINVER(TRUE, IsWindowsVersionOrGreater(HIBYTE(_WIN32_WINNT_WINBLUE), LOBYTE(_WIN32_WINNT_WINBLUE), 0));
+}
+
+BOOL WIN_IsWindows10OrGreater(void)
+{
+    CHECKWINVER(TRUE, IsWindowsVersionOrGreater(HIBYTE(_WIN32_WINNT_WIN10), LOBYTE(_WIN32_WINNT_WIN10), 0));
 }
 
 BOOL WIN_IsWindows11OrGreater(void)

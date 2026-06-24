@@ -45,7 +45,7 @@ typedef LONG NTSTATUS;
 #define _WIN32_WINNT_WIN8 0x0602
 #endif
 
-#ifdef __CYGWIN__
+#if defined(__CYGWIN__) && !defined(HIDAPI_USING_SDL_RUNTIME)
 #include <ntdef.h>
 #include <wctype.h>
 #define _wcsdup wcsdup
@@ -146,7 +146,7 @@ static int lookup_functions(void)
 		goto err;
 	}
 
-#define RESOLVE(lib_handle, x) x = (x##_)GetProcAddress(lib_handle, #x); if (!x) goto err;
+#define RESOLVE(lib_handle, x) x = (x##_)GetProcAddress(lib_handle, #x); if (!x) goto err
 
 	RESOLVE(hid_lib_handle, HidD_GetHidGuid);
 	RESOLVE(hid_lib_handle, HidD_GetAttributes);
@@ -1046,7 +1046,7 @@ struct hid_device_info HID_API_EXPORT * HID_API_CALL hid_enumerate(unsigned shor
 			HidP_GetCaps(pp_data, &caps);
 			HidD_FreePreparsedData(pp_data);
 		}
-		if (HIDAPI_IGNORE_DEVICE(bus_type, attrib.VendorID, attrib.ProductID, caps.UsagePage, caps.Usage, false)) {
+		if (HIDAPI_IGNORE_DEVICE(bus_type, attrib.VendorID, attrib.ProductID, caps.UsagePage, caps.Usage, false, false)) {
 			goto cont_close;
 		}
 #endif

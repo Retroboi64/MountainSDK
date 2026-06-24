@@ -189,6 +189,7 @@ typedef struct SDL_WaylandSeat
         struct zwp_pointer_gesture_pinch_v1 *gesture_pinch;
 
         SDL_WindowData *focus;
+        struct wl_surface *focus_surface;
 
         // According to the spec, a seat can only have one active gesture of any type at a time.
         SDL_WindowData *gesture_focus;
@@ -207,7 +208,9 @@ typedef struct SDL_WaylandSeat
             bool have_absolute;
             bool have_relative;
             bool have_axis;
-            bool have_enter;
+
+            Uint32 buttons_pressed;
+            Uint32 buttons_released;
 
             struct
             {
@@ -233,6 +236,9 @@ typedef struct SDL_WaylandSeat
 
                 SDL_MouseWheelDirection direction;
             } axis;
+
+            struct wl_surface *enter_surface;
+            struct wl_surface *leave_surface;
 
             // Event timestamp in nanoseconds
             Uint64 timestamp_ns;

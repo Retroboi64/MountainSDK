@@ -75,8 +75,8 @@
     } while (0)
 
 static bool SDL_gamepads_initialized;
-static SDL_Gamepad *SDL_gamepads SDL_GUARDED_BY(SDL_joystick_lock) = NULL;
-static SDL_HashTable *SDL_gamepad_names SDL_GUARDED_BY(SDL_joystick_lock) = NULL;
+static SDL_Gamepad *SDL_gamepads SDL_GUARDED_BY(SDL_event_lock) = NULL;
+static SDL_HashTable *SDL_gamepad_names SDL_GUARDED_BY(SDL_event_lock) = NULL;
 
 // The face button style of a gamepad
 typedef enum
@@ -96,7 +96,7 @@ typedef enum
     SDL_GAMEPAD_MAPPING_PRIORITY_USER,
 } SDL_GamepadMappingPriority;
 
-#define _guarded SDL_GUARDED_BY(SDL_joystick_lock)
+#define _guarded SDL_GUARDED_BY(SDL_event_lock)
 
 typedef struct GamepadMapping_t
 {
@@ -121,13 +121,13 @@ typedef struct
 #undef _guarded
 
 static SDL_GUID s_zeroGUID;
-static GamepadMapping_t *s_pSupportedGamepads SDL_GUARDED_BY(SDL_joystick_lock) = NULL;
-static GamepadMapping_t *s_pDefaultMapping SDL_GUARDED_BY(SDL_joystick_lock) = NULL;
-static GamepadMapping_t *s_pXInputMapping SDL_GUARDED_BY(SDL_joystick_lock) = NULL;
-static MappingChangeTracker *s_mappingChangeTracker SDL_GUARDED_BY(SDL_joystick_lock) = NULL;
-static SDL_HashTable *s_gamepadInstanceIDs SDL_GUARDED_BY(SDL_joystick_lock) = NULL;
+static GamepadMapping_t *s_pSupportedGamepads SDL_GUARDED_BY(SDL_event_lock) = NULL;
+static GamepadMapping_t *s_pDefaultMapping SDL_GUARDED_BY(SDL_event_lock) = NULL;
+static GamepadMapping_t *s_pXInputMapping SDL_GUARDED_BY(SDL_event_lock) = NULL;
+static MappingChangeTracker *s_mappingChangeTracker SDL_GUARDED_BY(SDL_event_lock) = NULL;
+static SDL_HashTable *s_gamepadInstanceIDs SDL_GUARDED_BY(SDL_event_lock) = NULL;
 
-#define _guarded SDL_GUARDED_BY(SDL_joystick_lock)
+#define _guarded SDL_GUARDED_BY(SDL_event_lock)
 
 // The SDL gamepad structure
 struct SDL_Gamepad
@@ -203,6 +203,9 @@ static const struct SDL_GamepadBlacklistWords SDL_gamepad_blacklist_words[] = {
     // The Google Pixel fingerprint sensor, as well as other fingerprint sensors, reports itself as a joystick
     {"uinput-",         GAMEPAD_BLACKLIST_BEGIN},
 
+    // The IR receiver on the NVIDIA Shield TV
+    {"gpio_ir_recv",    GAMEPAD_BLACKLIST_BEGIN},
+
     {"Synaptics ",      GAMEPAD_BLACKLIST_ANYWHERE}, // "Synaptics TM2768-001", "SynPS/2 Synaptics TouchPad"
     {"Trackpad",        GAMEPAD_BLACKLIST_ANYWHERE},
     {"Clickpad",        GAMEPAD_BLACKLIST_ANYWHERE},
@@ -212,6 +215,7 @@ static const struct SDL_GamepadBlacklistWords SDL_gamepad_blacklist_words[] = {
     {"Mouse ",          GAMEPAD_BLACKLIST_BEGIN}, // "Mouse passthrough"
     {" Pen",            GAMEPAD_BLACKLIST_END}, // "Wacom One by Wacom S Pen"
     {" Finger",         GAMEPAD_BLACKLIST_END}, // "Wacom HID 495F Finger"
+    {" System Control", GAMEPAD_BLACKLIST_END}, // "hid-over-i2c 0107 System Control"
     {" LED ",           GAMEPAD_BLACKLIST_ANYWHERE}, // "ASRock LED Controller"
     {" Thelio ",        GAMEPAD_BLACKLIST_ANYWHERE}, // "System76 Thelio Io 2"
 };
@@ -1111,7 +1115,7 @@ static GamepadMapping_t *SDL_CreateMappingForHIDAPIGamepad(SDL_GUID guid)
 
     SDL_GetJoystickGUIDInfo(guid, &vendor, &product, &version, NULL);
 
-    if (SDL_IsJoystickWheel(vendor, product)) {
+    if (SDL_IsJoystickWheel(vendor, product, 0)) {
         // We don't want to pick up Logitech FFB wheels here
         // Some versions of WINE will also not treat devices that show up as gamepads as wheels
         return NULL;
@@ -1253,10 +1257,10 @@ static GamepadMapping_t *SDL_CreateMappingForHIDAPIGamepad(SDL_GUID guid)
             SDL_strlcat(mapping_string, "paddle1:b11,paddle2:b12,", sizeof(mapping_string));
         } else if (SDL_IsJoystickSteamDeck(vendor, product)) {
             // The Steam Deck's built-in controller has QAM, 4 back buttons, L/R trackpads, and L/R capacitive touch sticks
-            SDL_strlcat(mapping_string, "misc1:b11,paddle1:b12,paddle2:b13,paddle3:b14,paddle4:b15,touchpad:b17,misc2:b16,misc3:b19,misc4:b18", sizeof(mapping_string));
+            SDL_strlcat(mapping_string, "misc1:b11,paddle1:b12,paddle2:b13,paddle3:b14,paddle4:b15,touchpad:b17,misc2:b16", sizeof(mapping_string));
         } else if (SDL_IsJoystickSteamTriton(vendor, product)) {
             // Second generation Steam controllers have 4 back paddle buttons
-            SDL_strlcat(mapping_string, "misc1:b11,paddle1:b12,paddle2:b13,paddle3:b14,paddle4:b15,touchpad:b17,misc2:b16,misc3:b19,misc4:b18,misc5:b21,misc6:b20", sizeof(mapping_string));
+            SDL_strlcat(mapping_string, "misc1:b11,paddle1:b12,paddle2:b13,paddle3:b14,paddle4:b15,touchpad:b17,misc2:b16", sizeof(mapping_string));
         } else if (SDL_IsJoystickNintendoSwitchPro(vendor, product) ||
                    SDL_IsJoystickNintendoSwitchProInputOnly(vendor, product)) {
             // Nintendo Switch Pro controllers have a screenshot button
@@ -1280,7 +1284,7 @@ static GamepadMapping_t *SDL_CreateMappingForHIDAPIGamepad(SDL_GUID guid)
             }
         } else if (SDL_IsJoystickHoriSteamController(vendor, product)) {
             /* The Wireless HORIPad for Steam has QAM, Steam, Capsense L/R Sticks, 2 rear buttons, and 2 misc buttons */
-            SDL_strlcat(mapping_string, "paddle1:b13,paddle2:b12,paddle3:b15,paddle4:b14,misc1:b11,misc3:b16,misc4:b17", sizeof(mapping_string));
+            SDL_strlcat(mapping_string, "paddle1:b13,paddle2:b12,paddle3:b15,paddle4:b14,misc1:b11", sizeof(mapping_string));
         } else if (SDL_IsJoystickFlydigiController(vendor, product)) {
             SDL_strlcat(mapping_string, "paddle1:b11,paddle2:b12,paddle3:b13,paddle4:b14,", sizeof(mapping_string));
             if (guid.data[15] >= SDL_FLYDIGI_VADER2) {
@@ -1294,6 +1298,10 @@ static GamepadMapping_t *SDL_CreateMappingForHIDAPIGamepad(SDL_GUID guid)
                 // Apex 5 has additional shoulder macro buttons
                 SDL_strlcat(mapping_string, "misc2:b15,misc3:b16,", sizeof(mapping_string));
             }
+        } else if (SDL_IsJoystickGameSirController(vendor, product) &&
+                   guid.data[0] == SDL_HARDWARE_BUS_USB) {
+            // The GameSir-G7 Pro 8K has a set of paddles and shoulder macro buttons
+            SDL_strlcat(mapping_string, "misc1:b11,paddle1:b13,paddle2:b12,misc2:b14,misc3:b15,", sizeof(mapping_string));
         } else if (vendor == USB_VENDOR_8BITDO && product == USB_PRODUCT_8BITDO_ULTIMATE2_WIRELESS) {
             SDL_strlcat(mapping_string, "paddle1:b12,paddle2:b11,paddle3:b14,paddle4:b13,", sizeof(mapping_string));
         } else {
@@ -1489,7 +1497,8 @@ static const char *map_StringForGamepadType[] = {
     "joyconleft",
     "joyconright",
     "joyconpair",
-    "gamecube"
+    "gamecube",
+    "steam"
 };
 SDL_COMPILE_TIME_ASSERT(map_StringForGamepadType, SDL_arraysize(map_StringForGamepadType) == SDL_GAMEPAD_TYPE_COUNT);
 
@@ -3945,6 +3954,48 @@ bool SDL_GetGamepadSensorData(SDL_Gamepad *gamepad, SDL_SensorType type, float *
     return SDL_Unsupported();
 }
 
+bool SDL_GamepadHasCapSense(SDL_Gamepad *gamepad, SDL_GamepadCapSenseType type)
+{
+    bool result = false;
+
+    SDL_LockJoysticks();
+    {
+        SDL_Joystick *joystick = SDL_GetGamepadJoystick(gamepad);
+        if (joystick) {
+            for (int i = 0; i < joystick->ncapsenses; ++i) {
+                if (joystick->capsenses[i].type == type) {
+                    result = true;
+                    break;
+                }
+            }
+        }
+    }
+    SDL_UnlockJoysticks();
+
+    return result;
+}
+
+bool SDL_GetGamepadCapSense(SDL_Gamepad *gamepad, SDL_GamepadCapSenseType type)
+{
+    bool result = false;
+
+    SDL_LockJoysticks();
+    {
+        SDL_Joystick *joystick = SDL_GetGamepadJoystick(gamepad);
+        if (joystick) {
+            for (int i = 0; i < joystick->ncapsenses; ++i) {
+                if (joystick->capsenses[i].type == type) {
+                    result = joystick->capsenses[i].down;
+                    break;
+                }
+            }
+        }
+    }
+    SDL_UnlockJoysticks();
+
+    return result;
+}
+
 SDL_JoystickID SDL_GetGamepadID(SDL_Gamepad *gamepad)
 {
     SDL_Joystick *joystick = SDL_GetGamepadJoystick(gamepad);
@@ -4463,6 +4514,8 @@ static const Uint32 SDL_gamepad_event_list[] = {
     SDL_EVENT_GAMEPAD_TOUCHPAD_MOTION,
     SDL_EVENT_GAMEPAD_TOUCHPAD_UP,
     SDL_EVENT_GAMEPAD_SENSOR_UPDATE,
+    SDL_EVENT_GAMEPAD_CAPSENSE_TOUCH,
+    SDL_EVENT_GAMEPAD_CAPSENSE_RELEASE,
 };
 
 void SDL_SetGamepadEventsEnabled(bool enabled)

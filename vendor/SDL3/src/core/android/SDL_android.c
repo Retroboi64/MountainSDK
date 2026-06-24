@@ -123,14 +123,16 @@ JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(onNativeTouch)(
     jint action, jfloat x, jfloat y, jfloat p);
 
 JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(onNativePinchStart)(
-    JNIEnv *env, jclass jcls);
+    JNIEnv *env, jclass jcls,
+    jfloat span_x, jfloat span_y, jfloat focus_x, jfloat focus_y);
 
 JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(onNativePinchUpdate)(
     JNIEnv *env, jclass jcls,
-    jfloat scale);
+    jfloat scale, jfloat span_x, jfloat span_y, jfloat focus_x, jfloat focus_y);
 
 JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(onNativePinchEnd)(
-    JNIEnv *env, jclass jcls);
+    JNIEnv *env, jclass jcls,
+    jfloat span_x, jfloat span_y, jfloat focus_x, jfloat focus_y);
 
 JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(onNativeMouse)(
     JNIEnv *env, jclass jcls,
@@ -139,10 +141,6 @@ JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(onNativeMouse)(
 JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(onNativePen)(
     JNIEnv *env, jclass jcls,
     jint pen_id_in, jint device_type, jint button, jint action, jfloat x, jfloat y, jfloat p);
-
-JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(onNativeAccel)(
-    JNIEnv *env, jclass jcls,
-    jfloat x, jfloat y, jfloat z);
 
 JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(onNativeClipboardChanged)(
     JNIEnv *env, jclass jcls);
@@ -232,12 +230,11 @@ static JNINativeMethod SDLActivity_tab[] = {
     { "onNativeSoftReturnKey", "()Z", SDL_JAVA_INTERFACE(onNativeSoftReturnKey) },
     { "onNativeKeyboardFocusLost", "()V", SDL_JAVA_INTERFACE(onNativeKeyboardFocusLost) },
     { "onNativeTouch", "(IIIFFF)V", SDL_JAVA_INTERFACE(onNativeTouch) },
-    { "onNativePinchStart", "()V", SDL_JAVA_INTERFACE(onNativePinchStart) },
-    { "onNativePinchUpdate", "(F)V", SDL_JAVA_INTERFACE(onNativePinchUpdate) },
-    { "onNativePinchEnd", "()V", SDL_JAVA_INTERFACE(onNativePinchEnd) },
+    { "onNativePinchStart", "(FFFF)V", SDL_JAVA_INTERFACE(onNativePinchStart) },
+    { "onNativePinchUpdate", "(FFFFF)V", SDL_JAVA_INTERFACE(onNativePinchUpdate) },
+    { "onNativePinchEnd", "(FFFF)V", SDL_JAVA_INTERFACE(onNativePinchEnd) },
     { "onNativeMouse", "(IIFFZ)V", SDL_JAVA_INTERFACE(onNativeMouse) },
     { "onNativePen", "(IIIIFFF)V", SDL_JAVA_INTERFACE(onNativePen) },
-    { "onNativeAccel", "(FFF)V", SDL_JAVA_INTERFACE(onNativeAccel) },
     { "onNativeClipboardChanged", "()V", SDL_JAVA_INTERFACE(onNativeClipboardChanged) },
     { "nativeLowMemory", "()V", SDL_JAVA_INTERFACE(nativeLowMemory) },
     { "onNativeLocaleChanged", "()V", SDL_JAVA_INTERFACE(onNativeLocaleChanged) },
@@ -374,6 +371,7 @@ static jmethodID midClipboardSetText;
 static jmethodID midCreateCustomCursor;
 static jmethodID midDestroyCustomCursor;
 static jmethodID midGetContext;
+static jmethodID midGetDeviceFormFactor;
 static jmethodID midGetManifestEnvironmentVariables;
 static jmethodID midGetNativeSurface;
 static jmethodID midInitTouch;
@@ -412,19 +410,17 @@ static jmethodID midAudioSetThreadPriority;
 static jclass mControllerManagerClass;
 
 // method signatures
-static jmethodID midPollInputDevices;
+static jmethodID midDetectDevices;
 static jmethodID midJoystickSetLED;
 static jmethodID midJoystickSetSensorsEnabled;
-static jmethodID midPollHapticDevices;
+static jmethodID midDetectHapticDevices;
 static jmethodID midHapticRun;
 static jmethodID midHapticRumble;
 static jmethodID midHapticStop;
 
-// Accelerometer data storage
+// display orientation
 static SDL_DisplayOrientation displayNaturalOrientation;
 static SDL_DisplayOrientation displayCurrentOrientation;
-static float fLastAccelerometer[3];
-static bool bHasNewData;
 
 static bool bHasEnvironmentVariables;
 
@@ -435,6 +431,7 @@ static AAssetManager *asset_manager = NULL;
 static jobject javaAssetManagerRef = 0;
 
 static SDL_Mutex *Android_ActivityMutex = NULL;
+static int Android_ActivityMutexCount = 0;
 static SDL_Mutex *Android_LifecycleMutex = NULL;
 static SDL_Semaphore *Android_LifecycleEventSem = NULL;
 static SDL_AndroidLifecycleEvent Android_LifecycleEvents[SDL_NUM_ANDROID_LIFECYCLE_EVENTS];
@@ -665,6 +662,7 @@ JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(nativeSetupJNI)(JNIEnv *env, jclass cl
     midCreateCustomCursor = (*env)->GetStaticMethodID(env, mActivityClass, "createCustomCursor", "([IIIII)I");
     midDestroyCustomCursor = (*env)->GetStaticMethodID(env, mActivityClass, "destroyCustomCursor", "(I)V");
     midGetContext = (*env)->GetStaticMethodID(env, mActivityClass, "getContext", "()Landroid/app/Activity;");
+    midGetDeviceFormFactor = (*env)->GetStaticMethodID(env, mActivityClass, "getDeviceFormFactor", "()Ljava/lang/String;");
     midGetManifestEnvironmentVariables = (*env)->GetStaticMethodID(env, mActivityClass, "getManifestEnvironmentVariables", "()Z");
     midGetNativeSurface = (*env)->GetStaticMethodID(env, mActivityClass, "getNativeSurface", "()Landroid/view/Surface;");
     midInitTouch = (*env)->GetStaticMethodID(env, mActivityClass, "initTouch", "()V");
@@ -688,7 +686,7 @@ JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(nativeSetupJNI)(JNIEnv *env, jclass cl
     midShowTextInput = (*env)->GetStaticMethodID(env, mActivityClass, "showTextInput", "(IIIII)Z");
     midSupportsRelativeMouse = (*env)->GetStaticMethodID(env, mActivityClass, "supportsRelativeMouse", "()Z");
     midOpenFileDescriptor = (*env)->GetStaticMethodID(env, mActivityClass, "openFileDescriptor", "(Ljava/lang/String;Ljava/lang/String;)I");
-    midShowFileDialog = (*env)->GetStaticMethodID(env, mActivityClass, "showFileDialog", "([Ljava/lang/String;ZZI)Z");
+    midShowFileDialog = (*env)->GetStaticMethodID(env, mActivityClass, "showFileDialog", "([Ljava/lang/String;ZILjava/lang/String;I)Z");
     midGetPreferredLocales = (*env)->GetStaticMethodID(env, mActivityClass, "getPreferredLocales", "()Ljava/lang/String;");
 
     if (!midClipboardGetText ||
@@ -697,6 +695,7 @@ JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(nativeSetupJNI)(JNIEnv *env, jclass cl
         !midCreateCustomCursor ||
         !midDestroyCustomCursor ||
         !midGetContext ||
+        !midGetDeviceFormFactor ||
         !midGetManifestEnvironmentVariables ||
         !midGetNativeSurface ||
         !midInitTouch ||
@@ -759,14 +758,14 @@ JNIEXPORT void JNICALL SDL_JAVA_CONTROLLER_INTERFACE(nativeSetupJNI)(JNIEnv *env
 
     mControllerManagerClass = (jclass)((*env)->NewGlobalRef(env, cls));
 
-    midPollInputDevices = (*env)->GetStaticMethodID(env, mControllerManagerClass,
-                                                    "pollInputDevices", "()V");
+    midDetectDevices = (*env)->GetStaticMethodID(env, mControllerManagerClass,
+                                                    "detectDevices", "()V");
     midJoystickSetLED = (*env)->GetStaticMethodID(env, mControllerManagerClass,
                                               "joystickSetLED", "(IIII)V");
     midJoystickSetSensorsEnabled = (*env)->GetStaticMethodID(env, mControllerManagerClass,
                                               "joystickSetSensorsEnabled", "(IZ)V");
-    midPollHapticDevices = (*env)->GetStaticMethodID(env, mControllerManagerClass,
-                                                     "pollHapticDevices", "()V");
+    midDetectHapticDevices = (*env)->GetStaticMethodID(env, mControllerManagerClass,
+                                                     "detectHapticDevices", "()V");
     midHapticRun = (*env)->GetStaticMethodID(env, mControllerManagerClass,
                                              "hapticRun", "(IFI)V");
     midHapticRumble = (*env)->GetStaticMethodID(env, mControllerManagerClass,
@@ -774,7 +773,7 @@ JNIEXPORT void JNICALL SDL_JAVA_CONTROLLER_INTERFACE(nativeSetupJNI)(JNIEnv *env
     midHapticStop = (*env)->GetStaticMethodID(env, mControllerManagerClass,
                                               "hapticStop", "(I)V");
 
-    if (!midPollInputDevices || !midJoystickSetLED || !midJoystickSetSensorsEnabled || !midPollHapticDevices || !midHapticRun || !midHapticRumble || !midHapticStop) {
+    if (!midDetectDevices || !midJoystickSetLED || !midJoystickSetSensorsEnabled || !midDetectHapticDevices || !midHapticRun || !midHapticRumble || !midHapticStop) {
         __android_log_print(ANDROID_LOG_WARN, "SDL", "Missing some Java callbacks, do you have the latest version of SDLControllerManager.java?");
     }
 
@@ -1004,6 +1003,15 @@ bool Android_WaitLifecycleEvent(SDL_AndroidLifecycleEvent *event, Sint64 timeout
 {
     bool got_event = false;
 
+    int relock_count = 0;
+    Android_LockActivityMutex();
+    while (Android_ActivityMutexCount > 1) {
+        // We came into this function with the activity lock held, we need to unlock so lifecycle events can be dispatched
+        ++relock_count;
+        Android_UnlockActivityMutex();
+    }
+    Android_UnlockActivityMutex();
+
     while (!got_event && SDL_WaitSemaphoreTimeoutNS(Android_LifecycleEventSem, timeoutNS)) {
         SDL_LockMutex(Android_LifecycleMutex);
         {
@@ -1015,16 +1023,23 @@ bool Android_WaitLifecycleEvent(SDL_AndroidLifecycleEvent *event, Sint64 timeout
         }
         SDL_UnlockMutex(Android_LifecycleMutex);
     }
+
+    while (relock_count > 0) {
+        Android_LockActivityMutex();
+        --relock_count;
+    }
     return got_event;
 }
 
 void Android_LockActivityMutex(void)
 {
     SDL_LockMutex(Android_ActivityMutex);
+    ++Android_ActivityMutexCount;
 }
 
 void Android_UnlockActivityMutex(void)
 {
+    --Android_ActivityMutexCount;
     SDL_UnlockMutex(Android_ActivityMutex);
 }
 
@@ -1417,36 +1432,36 @@ JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(onNativeTouch)(
 
 // Pinch
 JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(onNativePinchStart)(
-    JNIEnv *env, jclass jcls)
+    JNIEnv *env, jclass jcls, jfloat span_x, jfloat span_y, jfloat focus_x, jfloat focus_y)
 {
     SDL_LockMutex(Android_ActivityMutex);
 
     if (Android_Window) {
-        SDL_SendPinch(SDL_EVENT_PINCH_BEGIN, 0, Android_Window, 0);
+        SDL_SendPinch(SDL_EVENT_PINCH_BEGIN, 0, Android_Window, 0, span_x, span_y, focus_x, focus_y);
     }
 
     SDL_UnlockMutex(Android_ActivityMutex);
 }
 
 JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(onNativePinchUpdate)(
-    JNIEnv *env, jclass jcls, jfloat scale)
+    JNIEnv *env, jclass jcls, jfloat scale, jfloat span_x, jfloat span_y, jfloat focus_x, jfloat focus_y)
 {
     SDL_LockMutex(Android_ActivityMutex);
 
     if (Android_Window) {
-        SDL_SendPinch(SDL_EVENT_PINCH_UPDATE, 0, Android_Window, scale);
+        SDL_SendPinch(SDL_EVENT_PINCH_UPDATE, 0, Android_Window, scale, span_x, span_y, focus_x, focus_y);
     }
 
     SDL_UnlockMutex(Android_ActivityMutex);
 }
 
 JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(onNativePinchEnd)(
-    JNIEnv *env, jclass jcls)
+    JNIEnv *env, jclass jcls, jfloat span_x, jfloat span_y, jfloat focus_x, jfloat focus_y)
 {
     SDL_LockMutex(Android_ActivityMutex);
 
     if (Android_Window) {
-        SDL_SendPinch(SDL_EVENT_PINCH_END, 0, Android_Window, 0);
+        SDL_SendPinch(SDL_EVENT_PINCH_END, 0, Android_Window, 0, span_x, span_y, focus_x, focus_y);
     }
 
     SDL_UnlockMutex(Android_ActivityMutex);
@@ -1474,17 +1489,6 @@ JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(onNativePen)(
     Android_OnPen(Android_Window, pen_id_in, device_type, button, action, x, y, p);
 
     SDL_UnlockMutex(Android_ActivityMutex);
-}
-
-// Accelerometer
-JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(onNativeAccel)(
-    JNIEnv *env, jclass jcls,
-    jfloat x, jfloat y, jfloat z)
-{
-    fLastAccelerometer[0] = x;
-    fLastAccelerometer[1] = y;
-    fLastAccelerometer[2] = z;
-    bHasNewData = true;
 }
 
 // Clipboard
@@ -1762,22 +1766,6 @@ bool Android_JNI_ShouldMinimizeOnFocusLoss(void)
     return (*env)->CallStaticBooleanMethod(env, mActivityClass, midShouldMinimizeOnFocusLoss);
 }
 
-bool Android_JNI_GetAccelerometerValues(float values[3])
-{
-    bool result = false;
-
-    if (bHasNewData) {
-        int i;
-        for (i = 0; i < 3; ++i) {
-            values[i] = fLastAccelerometer[i];
-        }
-        bHasNewData = false;
-        result = true;
-    }
-
-    return result;
-}
-
 /*
  * Audio support
  */
@@ -1873,7 +1861,9 @@ typedef struct APKNode
 {
     char *name;
     SDL_PathInfo info;
+    struct APKNode *parent;
     struct APKNode *children;
+    struct APKNode *children_tail;
     struct APKNode *next_sibling;
 } APKNode;
 
@@ -1891,6 +1881,12 @@ static void FreeAPKNode(APKNode *node)
 
 static APKNode *FindAPKChildNode(APKNode *parent, const char *child)
 {
+    if ((child[0] == '.') && (child[1] == '\0')) {  // "." paths just return the current dir.
+        return parent;
+    } else if ((child[0] == '.') && (child[1] == '.') && (child[2] == '\0')) {  // ".." paths return the parent dir (or the current dir if at the root).
+        return parent->parent ? parent->parent : parent;
+    }
+
     for (APKNode *node = parent->children; node != NULL; node = node->next_sibling) {
         if (SDL_strcmp(child, node->name) == 0) {
             return node;
@@ -1901,9 +1897,17 @@ static APKNode *FindAPKChildNode(APKNode *parent, const char *child)
 
 static const APKNode *FindAPKNode(const char *constpath)
 {
+    //SDL_Log("FindAPKNode('%s') ...", constpath);
+
+    if (SDL_strncmp(constpath, "assets://", 9) == 0) {
+        constpath += 9;
+    }
+
     APKNode *parent = APKRootNode;
     if (!parent) {
         return NULL;
+    } else if (*constpath == '\0') {
+        return parent;
     }
 
     const size_t pathlen = SDL_strlen(constpath);
@@ -1967,8 +1971,13 @@ static APKNode *AddAPKChildNode(APKNode *parent, const char *child)
 
         SDL_copyp(&node->info, &parent->info);  // you probably need to update this afterwards.
 
-        node->next_sibling = parent->children;
-        parent->children = node;
+        node->parent = parent;
+        if (parent->children_tail) {  // APKs tend to be sorted alphabetically, so insert new nodes at the end of the list to maintain this order.
+            parent->children_tail->next_sibling = node;
+        } else {
+            parent->children = node;
+        }
+        parent->children_tail = node;
     }
     return node;
 }
@@ -1997,6 +2006,12 @@ static APKNode *AddAPKDirs(char *path, APKNode *parent)
             break;  // last thing is either an empty string (we ended with a '/'), or an actual file's name, so drop it.
         }
 
+        if ((path[0] == '.') && ((path[1] == '\0') || ((path[1] == '.') ||(path[2] == '\0')))) {
+            // whoa, there's a "." or ".." subdir in a zip entry's path? Fail!
+            SDL_SetError("bogus file path in APK file entry");
+            return NULL;
+        }
+
         *ptr = '\0';  // terminate on the end of this subdir's name.
         APKNode *node = AddAPKChildNode(parent, path);
         *ptr = '/';
@@ -2015,27 +2030,30 @@ static APKNode *AddAPKDirs(char *path, APKNode *parent)
 
 static SDL_Time ZipDosTimeToSDLTime(Uint32 dostime)
 {
-    Uint32 dosdate;
-    struct tm unixtime;
-    SDL_zero(unixtime);
+    // Note that DOS-style datetimes in a zip don't have timezone info, etc,
+    // so these are treated as UTC for lack of a better option. Also, they have
+    // 2-second precision and the year bits are going to roll over in 2108.
+    // There are possibly better timestamps in extended fields (!!! FIXME: add
+    // support for those), but this field is guaranteed to exist with all its
+    // flaws and is probably Good Enough anyhow.
+    const Uint32 dosdate = (Uint32) ((dostime >> 16) & 0xFFFF);
+    const Uint32 dostime16 = dostime & 0xFFFF;
 
-    dosdate = (Uint32) ((dostime >> 16) & 0xFFFF);
-    dostime &= 0xFFFF;
+    const int m = (int) ((dosdate >> 5) & 0x0F);
+    const int d = (int) ((dosdate >> 0) & 0x1F) + 1;
+    const int y = (int) (((dosdate >> 9) & 0x7F) + 1980) - (m <= 2 ? 1 : 0);
+    const int hour   = (int) ((dostime16 >> 11) & 0x1F);
+    const int minute = (int) ((dostime16 >>  5) & 0x3F);
+    const int sec    = (int) ((dostime16 <<  1) & 0x3E);
 
-    /* dissect date */
-    unixtime.tm_year = ((dosdate >> 9) & 0x7F) + 80;
-    unixtime.tm_mon  = ((dosdate >> 5) & 0x0F) - 1;
-    unixtime.tm_mday = ((dosdate     ) & 0x1F);
-
-    /* dissect time */
-    unixtime.tm_hour = ((dostime >> 11) & 0x1F);
-    unixtime.tm_min  = ((dostime >>  5) & 0x3F);
-    unixtime.tm_sec  = ((dostime <<  1) & 0x3E);
-
-    /* let mktime calculate daylight savings time. */
-    unixtime.tm_isdst = -1;
-
-    return ((SDL_Time) mktime(&unixtime));
+    // days since 1/1/1970: https://howardhinnant.github.io/date_algorithms.html#days_from_civil
+    const int era = ((y >= 0) ? y : (y - 399)) / 400;
+    const unsigned int yoe = (unsigned int) (y - era * 400);      // [0, 399]
+    const unsigned int doy = (((153 * ((m > 2) ? (m - 3) : (m + 9))) + 2) / 5) + (d - 1);  // [0, 365]
+    const unsigned int doe = (yoe * 365) + (yoe / 4) - (yoe / 100) + doy;         // [0, 146096]
+    const int days = (era * 146097) + ((int) doe) - 719468;
+    const int seconds = (hour * (60 * 60)) + (minute * 60) + (sec);
+    return (SDL_Time) (((Sint64) days) * 86400) + seconds;
 }
 
 
@@ -2255,7 +2273,7 @@ ioerr:
 
 static bool CreateAPKNodes(const char *path)
 {
-    SDL_Log("ANDROID: Parsing APK file '%s' ...", path);
+    //SDL_Log("ANDROID: Parsing APK file '%s' ...", path);
 
     SDL_IOStream *io = SDL_IOFromFile(path, "rb");
     if (!io) {
@@ -2362,12 +2380,20 @@ static void Internal_Android_Destroy_AssetManager(void)
 
 static const char *GetAssetPath(const char *path)
 {
-    if (path && path[0] == '.' && path[1] == '/') {
-        path += 2;
-        while (*path == '/') {
-            ++path;
-        }
+    if (!path) {
+        return NULL;
     }
+
+    if (path[0] == '.' && ((path[1] == '/') || (path[1] == '\0'))) {
+        path++;
+    } else if (SDL_strncmp(path, "assets://", 9) == 0) {
+        path += 9;
+    }
+
+    while (*path == '/') {
+        ++path;
+    }
+
     return path;
 }
 
@@ -2635,10 +2661,10 @@ void Android_JNI_InitTouch(void)
     (*env)->CallStaticVoidMethod(env, mActivityClass, midInitTouch);
 }
 
-void Android_JNI_PollInputDevices(void)
+void Android_JNI_DetectDevices(void)
 {
     JNIEnv *env = Android_JNI_GetEnv();
-    (*env)->CallStaticVoidMethod(env, mControllerManagerClass, midPollInputDevices);
+    (*env)->CallStaticVoidMethod(env, mControllerManagerClass, midDetectDevices);
 }
 
 void Android_JNI_JoystickSetLED(int device_id, int red, int green, int blue)
@@ -2653,10 +2679,10 @@ void Android_JNI_JoystickSetSensorsEnabled(int device_id, bool enabled)
     (*env)->CallStaticVoidMethod(env, mControllerManagerClass, midJoystickSetSensorsEnabled, device_id, (enabled == 1));
 }
 
-void Android_JNI_PollHapticDevices(void)
+void Android_JNI_DetectHapticDevices(void)
 {
     JNIEnv *env = Android_JNI_GetEnv();
-    (*env)->CallStaticVoidMethod(env, mControllerManagerClass, midPollHapticDevices);
+    (*env)->CallStaticVoidMethod(env, mControllerManagerClass, midDetectHapticDevices);
 }
 
 void Android_JNI_HapticRun(int device_id, float intensity, int length)
@@ -3182,12 +3208,12 @@ JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(nativePermissionResult)(
     JNIEnv *env, jclass cls,
     jint requestCode, jboolean result)
 {
-    SDL_LockMutex(Android_ActivityMutex);
+    SDL_LockMutex(SDL_event_lock);
     NativePermissionRequestInfo *prev = &pending_permissions;
     for (NativePermissionRequestInfo *info = prev->next; info != NULL; info = info->next) {
         if (info->request_code == (int) requestCode) {
             prev->next = info->next;
-            SDL_UnlockMutex(Android_ActivityMutex);
+            SDL_UnlockMutex(SDL_event_lock);
             info->callback(info->userdata, info->permission, result ? true : false);
             SDL_free(info->permission);
             SDL_free(info);
@@ -3196,7 +3222,7 @@ JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(nativePermissionResult)(
         prev = info;
     }
 
-    SDL_UnlockMutex(Android_ActivityMutex);
+    SDL_UnlockMutex(SDL_event_lock);
 }
 
 bool SDL_RequestAndroidPermission(const char *permission, SDL_RequestAndroidPermissionCallback cb, void *userdata)
@@ -3224,10 +3250,10 @@ bool SDL_RequestAndroidPermission(const char *permission, SDL_RequestAndroidPerm
     info->callback = cb;
     info->userdata = userdata;
 
-    SDL_LockMutex(Android_ActivityMutex);
+    SDL_LockMutex(SDL_event_lock);
     info->next = pending_permissions.next;
     pending_permissions.next = info;
-    SDL_UnlockMutex(Android_ActivityMutex);
+    SDL_UnlockMutex(SDL_event_lock);
 
     JNIEnv *env = Android_JNI_GetEnv();
     jstring jpermission = (*env)->NewStringUTF(env, permission);
@@ -3408,18 +3434,34 @@ JNIEXPORT void JNICALL SDL_JAVA_INTERFACE(onNativeFileDialog)(
     }
 }
 
-bool Android_JNI_OpenFileDialog(
+bool Android_JNI_ShowFileDialog(
     SDL_DialogFileCallback callback, void *userdata,
-    const SDL_DialogFileFilter *filters, int nfilters, bool forwrite,
-    bool multiple)
+    const SDL_DialogFileFilter *filters, int nfilters, SDL_FileDialogType type,
+    bool multiple, const char *initialPath)
 {
     if (mAndroidFileDialogData.callback != NULL) {
         SDL_SetError("Only one file dialog can be run at a time.");
         return false;
     }
 
-    if (forwrite) {
+    // Setup type
+    int dialogType = 0;
+
+    switch (type) {
+    case SDL_FILEDIALOG_OPENFILE:
+        dialogType = 0;
+        break;
+    case SDL_FILEDIALOG_SAVEFILE:
         multiple = false;
+        dialogType = 1;
+        break;
+    case SDL_FILEDIALOG_OPENFOLDER:
+        multiple = false;
+        dialogType = 2;
+        break;
+    default:
+        SDL_SetError("Invalid file dialog type");
+        return false;
     }
 
     JNIEnv *env = Android_JNI_GetEnv();
@@ -3439,6 +3481,12 @@ bool Android_JNI_OpenFileDialog(
         }
     }
 
+    // Setup initial path
+    jstring initialPathString = NULL;
+    if (initialPath && *initialPath) {
+        initialPathString = (*env)->NewStringUTF(env, initialPath);
+    }
+
     // Setup data
     static SDL_AtomicInt next_request_code;
     mAndroidFileDialogData.request_code = SDL_AddAtomicInt(&next_request_code, 1);
@@ -3447,8 +3495,10 @@ bool Android_JNI_OpenFileDialog(
 
     // Invoke JNI
     jboolean success = (*env)->CallStaticBooleanMethod(env, mActivityClass,
-        midShowFileDialog, filtersArray, (jboolean) multiple, (jboolean) forwrite, mAndroidFileDialogData.request_code);
+        midShowFileDialog, filtersArray, (jboolean) multiple,
+        dialogType, initialPathString, mAndroidFileDialogData.request_code);
     (*env)->DeleteLocalRef(env, filtersArray);
+    (*env)->DeleteLocalRef(env, initialPathString);
     if (!success) {
         mAndroidFileDialogData.callback = NULL;
         SDL_AddAtomicInt(&next_request_code, -1);
@@ -3458,6 +3508,39 @@ bool Android_JNI_OpenFileDialog(
     }
 
     return true;
+}
+
+SDL_FormFactor SDL_GetAndroidDeviceFormFactor(void)
+{
+    JNIEnv *env = Android_JNI_GetEnv();
+    SDL_FormFactor form_factor = SDL_FORMFACTOR_UNKNOWN;
+    jstring string;
+
+    string = (*env)->CallStaticObjectMethod(env, mActivityClass, midGetDeviceFormFactor);
+    if (string) {
+        const char *utf = (*env)->GetStringUTFChars(env, string, 0);
+        if (utf) {
+            if (SDL_strcmp(utf, "tv") == 0) {
+                form_factor = SDL_FORMFACTOR_TV;
+            } else if (SDL_strcmp(utf, "tablet") == 0) {
+                form_factor = SDL_FORMFACTOR_TABLET;
+            } else if (SDL_strcmp(utf, "phone") == 0) {
+                form_factor = SDL_FORMFACTOR_PHONE;
+            } else if (SDL_strcmp(utf, "car") == 0) {
+                form_factor = SDL_FORMFACTOR_CAR;
+            } else if (SDL_strcmp(utf, "headset") == 0) {
+                form_factor = SDL_FORMFACTOR_HEADSET;
+            } else if (SDL_strcmp(utf, "watch") == 0) {
+                form_factor = SDL_FORMFACTOR_WATCH;
+            } else {
+                form_factor = SDL_FORMFACTOR_UNKNOWN;
+            }
+            (*env)->ReleaseStringUTFChars(env, string, utf);
+        }
+        (*env)->DeleteLocalRef(env, string);
+    }
+
+    return form_factor;
 }
 
 #endif // SDL_PLATFORM_ANDROID

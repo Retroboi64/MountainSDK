@@ -280,6 +280,11 @@ struct SDL_Renderer
 
     bool (*AddVulkanRenderSemaphores)(SDL_Renderer *renderer, Uint32 wait_stage_mask, Sint64 wait_semaphore, Sint64 signal_semaphore);
 
+#ifdef SDL_PLATFORM_GDK
+    void (*GDKSuspendRenderer)(SDL_Renderer *renderer);
+    void (*GDKResumeRenderer)(SDL_Renderer *renderer);
+#endif
+
     // The current renderer info
     const char *name;
     SDL_PixelFormat *texture_formats;
@@ -375,6 +380,7 @@ extern SDL_RenderDriver D3D_RenderDriver;
 extern SDL_RenderDriver D3D11_RenderDriver;
 extern SDL_RenderDriver D3D12_RenderDriver;
 extern SDL_RenderDriver GL_RenderDriver;
+extern SDL_RenderDriver GLES_RenderDriver;
 extern SDL_RenderDriver GLES2_RenderDriver;
 extern SDL_RenderDriver METAL_RenderDriver;
 extern SDL_RenderDriver NGAGE_RenderDriver;

@@ -74,12 +74,6 @@
 #include <3ds.h>
 #endif
 
-#ifdef SDL_PLATFORM_LINUX
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#endif
-
 #ifndef GL_RGBA_FLOAT_MODE_ARB
 #define GL_RGBA_FLOAT_MODE_ARB 0x8820
 #endif /* GL_RGBA_FLOAT_MODE_ARB */
@@ -155,6 +149,9 @@ static VideoBootStrap *bootstrap[] = {
     &DUMMY_evdev_bootstrap,
 #endif
 #endif
+#ifdef SDL_VIDEO_DRIVER_DOSVESA
+    &DOSVESA_bootstrap,
+#endif
 #ifdef SDL_VIDEO_DRIVER_OPENVR
     &OPENVR_bootstrap,
 #endif
@@ -227,6 +224,11 @@ static bool SDL_DriverSendsHDRChanges(SDL_VideoDevice *_this)
     return !!(_this->device_caps & VIDEO_DEVICE_CAPS_SENDS_HDR_CHANGES);
 }
 
+static bool SDL_DriverHasSlowFramebuffer(SDL_VideoDevice *_this)
+{
+    return !!(_this->device_caps & VIDEO_DEVICE_CAPS_SLOW_FRAMEBUFFER);
+}
+
 // Hint to treat all window ops as synchronous
 static bool syncHint;
 
@@ -284,7 +286,7 @@ typedef struct
 
 static Uint32 SDL_DefaultGraphicsBackends(SDL_VideoDevice *_this)
 {
-#if (defined(SDL_VIDEO_OPENGL) && defined(SDL_PLATFORM_MACOS)) || (defined(SDL_PLATFORM_IOS) && !TARGET_OS_MACCATALYST)
+#if (defined(SDL_VIDEO_OPENGL) && defined(SDL_PLATFORM_MACOS)) || (defined(SDL_PLATFORM_IOS) && !TARGET_OS_MACCATALYST) || defined(SDL_PLATFORM_QNXNTO)
     if (_this->GL_CreateContext) {
         return SDL_WINDOW_OPENGL;
     }
@@ -655,6 +657,12 @@ bool SDL_VideoInit(const char *driver_name)
 
     // Select the proper video driver
     video = NULL;
+#ifdef SDL_PLATFORM_LINUX
+    // https://github.com/libsdl-org/SDL/issues/12247
+    if (SDL_IsUbuntuTouch()) {
+        driver_name = "wayland";
+    }
+#endif
     if (!driver_name) {
         driver_name = SDL_GetHint(SDL_HINT_VIDEO_DRIVER);
     }
@@ -726,7 +734,7 @@ bool SDL_VideoInit(const char *driver_name)
        but most things using SDL are games or media players; you wouldn't
        want a screensaver to trigger if you're playing exclusively with a
        joystick, or passively watching a movie. Things that use SDL but
-       function more like a normal desktop app should explicitly reenable the
+       function more like a normal desktop app should explicitly re-enable the
        screensaver. */
     if (!SDL_GetHintBoolean(SDL_HINT_VIDEO_ALLOW_SCREENSAVER, false)) {
         SDL_DisableScreenSaver();
@@ -1353,7 +1361,9 @@ SDL_DisplayMode **SDL_GetFullscreenDisplayModes(SDL_DisplayID displayID, int *co
     result = (SDL_DisplayMode **)SDL_malloc((num_modes + 1) * sizeof(*result) + num_modes * sizeof(**result));
     if (result) {
         SDL_DisplayMode *modes = (SDL_DisplayMode *)((Uint8 *)result + ((num_modes + 1) * sizeof(*result)));
-        SDL_memcpy(modes, display->fullscreen_modes, num_modes * sizeof(*modes));
+        if (num_modes) {
+            SDL_memcpy(modes, display->fullscreen_modes, num_modes * sizeof(*modes));
+        }
         for (i = 0; i < num_modes; ++i) {
             result[i] = modes++;
         }
@@ -2584,9 +2594,9 @@ SDL_Window *SDL_CreateWindowWithProperties(SDL_PropertiesID props)
     SDL_UpdateWindowHierarchy(window, parent);
 
     if (_this->CreateSDLWindow && !_this->CreateSDLWindow(_this, window, props)) {
-        PUSH_SDL_ERROR()
+        SDL_PushError();
         SDL_DestroyWindow(window);
-        POP_SDL_ERROR()
+        SDL_PopError();
         return NULL;
     }
 
@@ -2662,16 +2672,6 @@ static bool SDL_ReconfigureWindowInternal(SDL_Window *window, SDL_WindowFlags fl
         return false;
     }
 
-    // Don't attempt to reconfigure external windows.
-    if (window->flags & SDL_WINDOW_EXTERNAL) {
-        return false;
-    }
-
-    // Only attempt to reconfigure if the window has no existing graphics flags.
-    if (window->flags & (SDL_WINDOW_OPENGL | SDL_WINDOW_METAL | SDL_WINDOW_VULKAN)) {
-        return false;
-    }
-
     const SDL_WindowFlags graphics_flags = flags & (SDL_WINDOW_OPENGL | SDL_WINDOW_METAL | SDL_WINDOW_VULKAN);
     if (graphics_flags & (graphics_flags - 1)) {
         return SDL_SetError("Conflicting window flags specified");
@@ -2685,6 +2685,28 @@ static bool SDL_ReconfigureWindowInternal(SDL_Window *window, SDL_WindowFlags fl
     }
     if ((flags & SDL_WINDOW_METAL) && !_this->Metal_CreateView) {
         return SDL_ContextNotSupported("Metal");
+    }
+
+    if (!(window->flags & SDL_WINDOW_EXTERNAL)) {
+        // Only attempt to reconfigure if the window has no existing graphics flags.
+        if (window->flags & (SDL_WINDOW_OPENGL | SDL_WINDOW_METAL | SDL_WINDOW_VULKAN)) {
+            return false;
+        }
+    } else {
+        // Can't destroy and recreate an external window, so try our best to reconfigure it.
+        if (!_this->ReconfigureWindow(_this, window, 0)) {
+            return false;
+        }
+
+        // Reload the GL/Vulkan libraries in case the profile changed.
+        if (window->flags & SDL_WINDOW_OPENGL) {
+            SDL_GL_UnloadLibrary();
+        }
+        if (window->flags & SDL_WINDOW_VULKAN) {
+            SDL_Vulkan_UnloadLibrary();
+        }
+
+        window->flags &= ~(SDL_WINDOW_OPENGL | SDL_WINDOW_METAL | SDL_WINDOW_VULKAN);
     }
 
     SDL_DestroyWindowSurface(window);
@@ -3590,7 +3612,7 @@ bool SDL_SetWindowFullscreen(SDL_Window *window, bool fullscreen)
 
 bool SDL_SyncWindow(SDL_Window *window)
 {
-    CHECK_WINDOW_MAGIC(window, false)
+    CHECK_WINDOW_MAGIC(window, false);
 
     if (_this->SyncWindow) {
         return _this->SyncWindow(_this, window);
@@ -3602,11 +3624,11 @@ bool SDL_SyncWindow(SDL_Window *window)
 static bool ShouldAttemptTextureFramebuffer(void)
 {
     const char *hint;
-    bool attempt_texture_framebuffer = true;
+    bool attempt_texture_framebuffer;
 
-    // The dummy driver never has GPU support, of course.
-    if (_this->is_dummy) {
-        return false;
+    // If the driver doesn't support window framebuffers, always use the render API.
+    if (!_this->CreateWindowFramebuffer) {
+        return true;
     }
 
     // See if there's a hint override
@@ -3618,24 +3640,11 @@ static bool ShouldAttemptTextureFramebuffer(void)
             attempt_texture_framebuffer = true;
         }
     } else {
-        // Check for platform specific defaults
-#ifdef SDL_PLATFORM_LINUX
-        // On WSL, direct X11 is faster than using OpenGL for window framebuffers, so try to detect WSL and avoid texture framebuffer.
-        if ((_this->CreateWindowFramebuffer) && (SDL_strcmp(_this->name, "x11") == 0)) {
-            struct stat sb;
-            if ((stat("/proc/sys/fs/binfmt_misc/WSLInterop", &sb) == 0) || (stat("/run/WSL", &sb) == 0)) { // if either of these exist, we're on WSL.
-                attempt_texture_framebuffer = false;
-            }
-        }
-#endif
-#if defined(SDL_PLATFORM_WIN32) || defined(SDL_PLATFORM_WINGDK) // GDI BitBlt() is way faster than Direct3D dynamic textures right now. (!!! FIXME: is this still true?)
-        if (_this->CreateWindowFramebuffer && (SDL_strcmp(_this->name, "windows") == 0)) {
+        if (SDL_DriverHasSlowFramebuffer(_this)) {
+            attempt_texture_framebuffer = true;
+        } else {
             attempt_texture_framebuffer = false;
         }
-#endif
-#ifdef SDL_PLATFORM_EMSCRIPTEN
-        attempt_texture_framebuffer = false;
-#endif
     }
     return attempt_texture_framebuffer;
 }
@@ -4407,10 +4416,12 @@ void SDL_OnWindowEnter(SDL_Window *window)
     if (_this->OnWindowEnter) {
         _this->OnWindowEnter(_this, window);
     }
+    SDL_UpdateRelativeMouseMode();
 }
 
 void SDL_OnWindowLeave(SDL_Window *window)
 {
+    SDL_UpdateRelativeMouseMode();
 }
 
 void SDL_OnWindowFocusGained(SDL_Window *window)
@@ -5002,12 +5013,6 @@ void SDL_GL_ResetAttributes(void)
     _this->gl_config.profile_mask = SDL_GL_CONTEXT_PROFILE_ES;
 #endif
 
-    if (_this->GL_DefaultProfileConfig) {
-        _this->GL_DefaultProfileConfig(_this, &_this->gl_config.profile_mask,
-                                       &_this->gl_config.major_version,
-                                       &_this->gl_config.minor_version);
-    }
-
     _this->gl_config.flags = 0;
     _this->gl_config.framebuffer_srgb_capable = 0;
     _this->gl_config.no_error = 0;
@@ -5017,6 +5022,10 @@ void SDL_GL_ResetAttributes(void)
     _this->gl_config.share_with_current_context = 0;
 
     _this->gl_config.egl_platform = 0;
+
+    if (_this->GL_SetDefaultProfileConfig) {
+        _this->GL_SetDefaultProfileConfig(_this);
+    }
 }
 
 bool SDL_GL_SetAttribute(SDL_GLAttr attr, int value)
@@ -5276,7 +5285,7 @@ bool SDL_GL_GetAttribute(SDL_GLAttr attr, int *value)
     }
     case SDL_GL_ACCELERATED_VISUAL:
     {
-        // FIXME: How do we get this information?
+        // Note that we can _not_ reasonably detect this once we have a context.
         *value = (_this->gl_config.accelerated != 0);
         return true;
     }
@@ -5448,6 +5457,7 @@ SDL_GLContext SDL_GL_CreateContext(SDL_Window *window)
     }
 
 #if defined(SDL_VIDEO_OPENGL) || defined(SDL_VIDEO_OPENGL_ES) || defined(SDL_VIDEO_OPENGL_ES2)
+    // try to force the window framebuffer to the requested sRGB state.
     if (srgb_requested != -1) {
         PFNGLENABLEPROC glToggleFunc = (PFNGLENABLEPROC) SDL_GL_GetProcAddress(srgb_requested ? "glEnable" : "glDisable");
         PFNGLGETSTRINGPROC glGetStringFunc = (PFNGLGETSTRINGPROC)SDL_GL_GetProcAddress("glGetString");
@@ -5785,8 +5795,10 @@ static bool AutoShowingScreenKeyboard(void)
 {
     const char *hint = SDL_GetHint(SDL_HINT_ENABLE_SCREEN_KEYBOARD);
     if (!hint) {
-        // Steam will eventually have smarts about whether a keyboard is active, so always request the on-screen keyboard on Steam Deck
-        hint = SDL_GetHint("SteamDeck");
+        // This hint is currently only used by the X11 video driver
+        if (SDL_strcmp(_this->name, "x11") == 0) {
+            hint = SDL_GetHint(SDL_HINT_ENABLE_STEAM_SCREEN_KEYBOARD);
+        }
     }
     if (((!hint || SDL_strcasecmp(hint, "auto") == 0) && !SDL_HasKeyboard()) ||
         SDL_GetStringBoolean(hint, false)) {
@@ -6139,8 +6151,8 @@ bool SDL_ShouldAllowTopmost(void)
 
 bool SDL_ShowWindowSystemMenu(SDL_Window *window, int x, int y)
 {
-    CHECK_WINDOW_MAGIC(window, false)
-    CHECK_WINDOW_NOT_POPUP(window, false)
+    CHECK_WINDOW_MAGIC(window, false);
+    CHECK_WINDOW_NOT_POPUP(window, false);
 
     if (_this->ShowWindowSystemMenu) {
         _this->ShowWindowSystemMenu(window, x, y);
@@ -6482,7 +6494,10 @@ const char *SDL_GetCSSCursorName(SDL_SystemCursor id, const char **fallback_name
         return "ns-resize";
 
     case SDL_SYSTEM_CURSOR_MOVE:
-        return "all-scroll";
+        if (fallback_name) {
+            *fallback_name = "all-scroll";
+        }
+        return "move";
 
     case SDL_SYSTEM_CURSOR_NOT_ALLOWED:
         return "not-allowed";
@@ -6513,6 +6528,51 @@ const char *SDL_GetCSSCursorName(SDL_SystemCursor id, const char **fallback_name
 
     case SDL_SYSTEM_CURSOR_W_RESIZE:
         return "w-resize";
+
+    case SDL_SYSTEM_CURSOR_CONTEXT_MENU:
+        return "context-menu";
+
+    case SDL_SYSTEM_CURSOR_HELP:
+        return "help";
+
+    case SDL_SYSTEM_CURSOR_CELL:
+        return "cell";
+
+    case SDL_SYSTEM_CURSOR_VERTICAL_TEXT:
+        return "vertical-text";
+
+    case SDL_SYSTEM_CURSOR_ALIAS:
+        return "alias";
+
+    case SDL_SYSTEM_CURSOR_COPY:
+        return "copy";
+
+    case SDL_SYSTEM_CURSOR_NO_DROP:
+        return "no-drop";
+
+    case SDL_SYSTEM_CURSOR_GRAB:
+        return "grab";
+
+    case SDL_SYSTEM_CURSOR_GRABBING:
+        return "grabbing";
+
+    case SDL_SYSTEM_CURSOR_COL_RESIZE:
+        return "col-resize";
+
+    case SDL_SYSTEM_CURSOR_ROW_RESIZE:
+        return "row-resize";
+
+    case SDL_SYSTEM_CURSOR_ALL_SCROLL:
+        if (fallback_name) {
+            *fallback_name = "move";
+        }
+        return "all-scroll";
+
+    case SDL_SYSTEM_CURSOR_ZOOM_IN:
+        return "zoom-in";
+
+    case SDL_SYSTEM_CURSOR_ZOOM_OUT:
+        return "zoom-out";
 
     default:
         return "default";

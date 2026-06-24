@@ -30,7 +30,7 @@
 
 char *SDL_SYS_GetBasePath(void)
 {
-    return SDL_strdup("./");
+    return SDL_strdup("assets://");
 }
 
 char *SDL_SYS_GetExeName(void)

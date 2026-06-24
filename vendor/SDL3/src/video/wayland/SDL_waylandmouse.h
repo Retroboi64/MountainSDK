@@ -27,6 +27,7 @@
 extern void Wayland_InitMouse(SDL_VideoData *data);
 extern void Wayland_FiniMouse(SDL_VideoData *data);
 extern void Wayland_SeatUpdatePointerCursor(SDL_WaylandSeat *seat);
+extern void Wayland_SeatSetDefaultCursor(SDL_WaylandSeat *seat);
 extern void Wayland_SeatResetCursor(SDL_WaylandSeat *seat);
 extern void Wayland_DisplayUpdatePointerFocusedScale(SDL_WindowData *updated_window);
 extern void Wayland_TabletToolUpdateCursor(SDL_WaylandPenTool *tool);

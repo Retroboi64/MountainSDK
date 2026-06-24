@@ -664,16 +664,11 @@ static void IOS_AddJoystickDevice(GCController *controller)
     device->pause_button_index = -1;
 
     if (controller) {
-#ifdef SDL_JOYSTICK_MFI
         if (!IOS_AddMFIJoystickDevice(device, controller)) {
             SDL_free(device->name);
             SDL_free(device);
             return;
         }
-#else
-        SDL_free(device);
-        return;
-#endif // SDL_JOYSTICK_MFI
     }
 
     if (deviceList == NULL) {
@@ -728,7 +723,10 @@ static SDL_JoystickDeviceItem *IOS_RemoveJoystickDevice(SDL_JoystickDeviceItem *
         // These were explicitly retained in the struct, so they should be explicitly released before freeing the struct.
         if (device->controller) {
             GCController *controller = CFBridgingRelease((__bridge CFTypeRef)(device->controller));
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
             controller.controllerPausedHandler = nil;
+#pragma clang diagnostic pop
             device->controller = nil;
         }
         if (device->axes) {
@@ -933,11 +931,14 @@ static bool IOS_JoystickOpen(SDL_Joystick *joystick, int device_index)
 #ifdef SDL_JOYSTICK_MFI
         if (device->pause_button_index >= 0) {
             GCController *controller = device->controller;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
             controller.controllerPausedHandler = ^(GCController *c) {
               if (joystick->hwdata) {
                   joystick->hwdata->pause_button_pressed = SDL_GetTicks();
               }
             };
+#pragma clang diagnostic pop
         }
 
         if (@available(macOS 11.0, iOS 14.0, tvOS 14.0, *)) {
@@ -945,8 +946,6 @@ static bool IOS_JoystickOpen(SDL_Joystick *joystick, int device_index)
             GCMotion *motion = controller.motion;
             if (motion && motion.hasRotationRate) {
                 SDL_PrivateJoystickAddSensor(joystick, SDL_SENSOR_GYRO, 0.0f);
-            }
-            if (motion && motion.hasGravityAndUserAcceleration) {
                 SDL_PrivateJoystickAddSensor(joystick, SDL_SENSOR_ACCEL, 0.0f);
             }
         }
@@ -1197,20 +1196,17 @@ static void IOS_MFIJoystickUpdate(SDL_Joystick *joystick)
             if (motion && motion.sensorsActive) {
                 float data[3];
 
-                if (motion.hasRotationRate) {
-                    GCRotationRate rate = motion.rotationRate;
-                    data[0] = rate.x;
-                    data[1] = rate.z;
-                    data[2] = -rate.y;
-                    SDL_SendJoystickSensor(timestamp, joystick, SDL_SENSOR_GYRO, timestamp, data, 3);
-                }
-                if (motion.hasGravityAndUserAcceleration) {
-                    GCAcceleration accel = motion.acceleration;
-                    data[0] = -accel.x * SDL_STANDARD_GRAVITY;
-                    data[1] = -accel.y * SDL_STANDARD_GRAVITY;
-                    data[2] = -accel.z * SDL_STANDARD_GRAVITY;
-                    SDL_SendJoystickSensor(timestamp, joystick, SDL_SENSOR_ACCEL, timestamp, data, 3);
-                }
+                GCRotationRate rate = motion.rotationRate;
+                data[0] = rate.x;
+                data[1] = rate.z;
+                data[2] = -rate.y;
+                SDL_SendJoystickSensor(timestamp, joystick, SDL_SENSOR_GYRO, timestamp, data, 3);
+
+                GCAcceleration accel = motion.acceleration;
+                data[0] = -accel.x * SDL_STANDARD_GRAVITY;
+                data[1] = -accel.y * SDL_STANDARD_GRAVITY;
+                data[2] = -accel.z * SDL_STANDARD_GRAVITY;
+                SDL_SendJoystickSensor(timestamp, joystick, SDL_SENSOR_ACCEL, timestamp, data, 3);
             }
         }
 
@@ -1575,7 +1571,10 @@ static void IOS_JoystickClose(SDL_Joystick *joystick)
 
         if (device->controller) {
             GCController *controller = device->controller;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
             controller.controllerPausedHandler = nil;
+#pragma clang diagnostic pop
             controller.playerIndex = -1;
 
             if (@available(macOS 11.0, iOS 14.0, tvOS 14.0, *)) {

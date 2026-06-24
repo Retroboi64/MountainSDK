@@ -228,6 +228,7 @@
 #undef SDL_GPU_D3D12
 #undef SDL_GPU_METAL
 #undef SDL_GPU_VULKAN
+#undef HAVE_GPU_OPENXR
 #undef SDL_VIDEO_RENDER_GPU
 #endif // SDL_GPU_DISABLED
 
@@ -280,11 +281,16 @@ extern const char *SDL_GetExeName(void);
     } while (0)
 #endif
 
-#define PUSH_SDL_ERROR() \
-    { char *_error = SDL_strdup(SDL_GetError());
+// Macros to save and restore error values
+#define SDL_PushError() do { \
+    char *saved_error = SDL_strdup(SDL_GetError())
 
-#define POP_SDL_ERROR() \
-    SDL_SetError("%s", _error); SDL_free(_error); }
+#define SDL_PopError()                          \
+    if (saved_error) {                      \
+        SDL_SetError("%s", saved_error);    \
+        SDL_free(saved_error);              \
+    }                                       \
+} while (0)
 
 #if defined(SDL_DISABLE_INVALID_PARAMS)
 #ifdef DEBUG

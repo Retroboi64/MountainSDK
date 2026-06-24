@@ -20,5 +20,7 @@ target_include_directories(MountainSDK
 )
 
 target_link_libraries(MountainSDK PUBLIC
-     SDL3::SDL3
+    SDL3::SDL3-static
+    glad
+    opengl32
 )

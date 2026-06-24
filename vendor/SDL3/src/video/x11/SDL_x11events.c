@@ -1836,12 +1836,16 @@ static void X11_DispatchEvent(SDL_VideoDevice *_this, XEvent *xevent)
     case KeyPress:
     case KeyRelease:
     {
+        SDL_KeyboardID keyboardID = SDL_GLOBAL_KEYBOARD_ID;
         if (data->xinput2_keyboard_enabled) {
-            // This input is being handled by XInput2
+            // This input is being handled by XInput2.
             break;
+        } else if (xevent->xkey.serial == videodata->xinput_last_key_serial) {
+            // Use the device ID from the XInput2 event if the serials match.
+            keyboardID = videodata->xinput_last_keyboard_device;
         }
 
-        X11_HandleKeyEvent(_this, data, SDL_GLOBAL_KEYBOARD_ID, xevent);
+        X11_HandleKeyEvent(_this, data, keyboardID, xevent);
     } break;
 
     case MotionNotify:
@@ -2099,6 +2103,36 @@ static void X11_DispatchEvent(SDL_VideoDevice *_this, XEvent *xevent)
             }
             if (changed & SDL_WINDOW_OCCLUDED) {
                 SDL_SendWindowEvent(data->window, (flags & SDL_WINDOW_OCCLUDED) ? SDL_EVENT_WINDOW_OCCLUDED : SDL_EVENT_WINDOW_EXPOSED, 0, 0);
+            }
+        } else if (xevent->xproperty.atom == videodata->atoms.WM_STATE) {
+            /* Support for ICCCM-compliant window managers (like i3) that change
+               WM_STATE to WithdrawnState without sending UnmapNotify or updating
+               _NET_WM_STATE when moving windows to invisible workspaces. */
+            Atom type;
+            int format;
+            unsigned long nitems, bytes_after;
+            unsigned char *prop_data = NULL;
+
+            if (X11_XGetWindowProperty(display, data->xwindow, videodata->atoms.WM_STATE,
+                                       0L, 2L, False, videodata->atoms.WM_STATE,
+                                       &type, &format, &nitems, &bytes_after, &prop_data) == Success) {
+                if (nitems > 0) {
+                    // WM_STATE: 0=Withdrawn, 1=Normal, 3=Iconic
+                    Uint32 state = *(Uint32 *)prop_data;
+
+                    if (state == 0 || state == 3) { // Withdrawn or Iconic
+                        if (!(data->window->flags & SDL_WINDOW_MINIMIZED)) {
+                            SDL_SendWindowEvent(data->window, SDL_EVENT_WINDOW_MINIMIZED, 0, 0);
+                            SDL_SendWindowEvent(data->window, SDL_EVENT_WINDOW_OCCLUDED, 0, 0);
+                        }
+                    } else if (state == 1) { // NormalState
+                        if (data->window->flags & SDL_WINDOW_MINIMIZED) {
+                            SDL_SendWindowEvent(data->window, SDL_EVENT_WINDOW_RESTORED, 0, 0);
+                            SDL_SendWindowEvent(data->window, SDL_EVENT_WINDOW_EXPOSED, 0, 0);
+                        }
+                    }
+                }
+                X11_XFree(prop_data);
             }
         } else if (xevent->xproperty.atom == videodata->atoms.XKLAVIER_STATE) {
             /* Hack for Ubuntu 12.04 (etc) that doesn't send MappingNotify
